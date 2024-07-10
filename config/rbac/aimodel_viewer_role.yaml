@@ -1,0 +1,27 @@
+# permissions for end users to view aimodels.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: clusterrole
+    app.kubernetes.io/instance: aimodel-viewer-role
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/created-by: aimodel-operator
+    app.kubernetes.io/part-of: aimodel-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: aimodel-viewer-role
+rules:
+- apiGroups:
+  - model.youxam.com
+  resources:
+  - aimodels
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - model.youxam.com
+  resources:
+  - aimodels/status
+  verbs:
+  - get

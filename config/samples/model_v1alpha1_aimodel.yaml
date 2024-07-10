@@ -1,0 +1,16 @@
+apiVersion: model.youxam.com/v1alpha1
+kind: AIModel
+metadata:
+  labels:
+    app.kubernetes.io/name: aimodel
+    app.kubernetes.io/instance: aimodel-sample
+    app.kubernetes.io/part-of: aimodel-operator
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: aimodel-operator
+  name: aimodel-sample
+spec:
+  type: local
+  model: TinyLlama-1.1B
+  replicas: 3
+  image: youxam/uplion-aimodel-operator-test-worker:latest
+
