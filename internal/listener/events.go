@@ -14,11 +14,15 @@ import (
 )
 
 func StartEventListener(kubeClient kubernetes.Interface, dynamicClient client.Client, namespace string) {
+	log.Println("Starting event listener")
+
 	watcher, err := kubeClient.CoreV1().Events(v1.NamespaceAll).Watch(context.Background(), metav1.ListOptions{})
 	if err != nil {
 		log.Printf("Failed to create watcher: %v", err)
 		return
 	}
+
+	log.Println("Watcher created")
 
 	startTime := time.Now()
 
@@ -31,6 +35,7 @@ func StartEventListener(kubeClient kubernetes.Interface, dynamicClient client.Cl
 
 func handleEvent(event *v1.Event, dynamicClient client.Client) {
 	if event.InvolvedObject.Kind == "AIModel" && event.Type == v1.EventTypeWarning {
+		log.Printf("Handling event: %s %s", event.InvolvedObject.Name, event.Message)
 		updateAIModelStatus(event, dynamicClient)
 	}
 }

@@ -106,44 +106,50 @@ func (r *AIModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	// Check if the Deployment already exists, if not create a new one
 	found := &appsv1.Deployment{}
 	err = r.Get(ctx, types.NamespacedName{Name: dep.Name, Namespace: dep.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
 
-		// Create ServiceAccount, Role and RoleBinding for the Deployment to create events
-		err = r.createEventServiceAccountRoleAndBinding(ctx, aimodel, dep, logger)
-		if err != nil {
-			logger.Error(err, "Failed to create ServiceAccount, Role and RoleBinding", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
+	if err != nil {
+		// In most cases, err != nil means that Deployment does not exist.
+		if errors.IsNotFound(err) {
+			// If the Deployment does not exist, create a new Deployment
+
+			// Create ServiceAccount, Role and RoleBinding for the Deployment to create events
+			err = r.createEventServiceAccountRoleAndBinding(ctx, aimodel, dep, logger)
+			if err != nil {
+				logger.Error(err, "Failed to create ServiceAccount, Role and RoleBinding", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
+				return ctrl.Result{}, err
+			}
+
+			logger.Info("Creating a new Deployment", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
+			// Set AIModel instance as the owner and controller
+			if err := controllerutil.SetControllerReference(aimodel, dep, r.Scheme); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			err = r.Create(ctx, dep)
+			if err != nil {
+				logger.Error(err, "Failed to create new Deployment", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
+				return ctrl.Result{}, err
+			}
+
+			// Update the AIModel status
+			aimodel.Status.State = "Running"
+			aimodel.Status.Message = "AIModel is running successfully"
+			err = r.Status().Update(ctx, aimodel)
+			if err != nil {
+				logger.Error(err, "Failed to update AIModel status")
+				return ctrl.Result{}, err
+			}
+
+			// Deployment created successfully - return and requeue
+			return ctrl.Result{Requeue: true}, nil
+		} else {
+			// Error reading the object - requeue the request.
+			logger.Error(err, "Failed to get Deployment")
 			return ctrl.Result{}, err
 		}
 
-		logger.Info("Creating a new Deployment", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
-		// Set AIModel instance as the owner and controller
-		if err := controllerutil.SetControllerReference(aimodel, dep, r.Scheme); err != nil {
-			return ctrl.Result{}, err
-		}
-
-		err = r.Create(ctx, dep)
-		if err != nil {
-			logger.Error(err, "Failed to create new Deployment", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
-			return ctrl.Result{}, err
-		}
-
-		// Update the AIModel status
-		aimodel.Status.State = "Running"
-		aimodel.Status.Message = "AIModel is running successfully"
-		err = r.Status().Update(ctx, aimodel)
-		if err != nil {
-			logger.Error(err, "Failed to update AIModel status")
-			return ctrl.Result{}, err
-		}
-
-		// Deployment created successfully - return and requeue
-		return ctrl.Result{Requeue: true}, nil
-	} else if err != nil {
-		logger.Error(err, "Failed to get Deployment")
-		return ctrl.Result{}, err
 	}
 
-	// Check for any changes in AIModel spec or labels
 	if !deploymentEqual(found, dep, logger) {
 		logger.Info("Updating existing Deployment", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
 		found.Spec = dep.Spec

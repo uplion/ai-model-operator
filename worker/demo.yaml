@@ -1,11 +1,11 @@
 apiVersion: model.youxam.com/v1alpha1
 kind: AIModel
 metadata:
-  name: aimodel-sample
+  name: ai-model-sample
   labels:
-    app: aimodel
+    app: ai-model
 spec:
-  type: remote
+  type: local
   model: TinyLlama-1.1B
   replicas: 3
   image: youxam/uplion-aimodel-operator-test-worker:latest
@@ -14,10 +14,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: aimodel-svc
+  name: ai-model-svc
 spec:
     selector:
-        app: aimodel
+        app: ai-model
     ports:
         - protocol: TCP
           port: 8080
