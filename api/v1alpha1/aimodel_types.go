@@ -35,6 +35,7 @@ type AIModelSpec struct {
 	Model string `json:"model"`
 
 	// Replicas is the number of replicas of the model
+	// +optional
 	Replicas *int32 `json:"replicas,omitempty"`
 
 	// If the AIModel is of type "Remote", the following fields should be set
@@ -48,8 +49,13 @@ type AIModelSpec struct {
 	// Image is the docker image of the model
 	Image string `json:"image"`
 
+	// MaxProcessNum is the maximum number of threads to process the requests
 	// +optional
 	MaxProcessNum *int32 `json:"maxProcessNum,omitempty"`
+
+	// MsgBacklogThreshold is the threshold of the lag for KEDA
+	// +optional
+	MsgBacklogThreshold *int32 `json:"msgBacklogThreshold,omitempty"`
 }
 
 // AIModelStatus defines the observed state of AIModel

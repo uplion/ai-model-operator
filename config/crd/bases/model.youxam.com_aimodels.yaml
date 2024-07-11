@@ -59,11 +59,17 @@ spec:
                 description: Image is the docker image of the model
                 type: string
               maxProcessNum:
+                description: MaxProcessNum is the maximum number of threads to process
+                  the requests
                 format: int32
                 type: integer
               model:
                 description: Model is the name of the model
                 type: string
+              msgBacklogThreshold:
+                description: MsgBacklogThreshold is the threshold of the lag for KEDA
+                format: int32
+                type: integer
               replicas:
                 description: Replicas is the number of replicas of the model
                 format: int32

@@ -26,6 +26,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"os"
@@ -37,11 +38,15 @@ import (
 	"time"
 )
 
+var PulsarAdminUrl = ""
 var PulsarUrl = "pulsar://localhost:6650"
 var PulsarToken = ""
 var ResTopicName = "res-topic"
 
 func init() {
+	if v, ok := os.LookupEnv("PULSAR_ADMIN_URL"); ok {
+		PulsarAdminUrl = v
+	}
 	if v, ok := os.LookupEnv("PULSAR_URL"); ok {
 		PulsarUrl = v
 	}
@@ -143,7 +148,7 @@ func (r *AIModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	needsRestart := sa.CreationTimestamp.After(lastUpdate)
 
 	// Check if we need to update the Deployment
-	needsUpdate := !deploymentEqual(found, dep, logger) || needsRestart
+	needsUpdate := !deploymentEqual(found, dep, logger, aimodel.Spec.MsgBacklogThreshold == nil) || needsRestart
 
 	if needsUpdate {
 		logger.Info("Updating existing Deployment", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
@@ -178,7 +183,116 @@ func (r *AIModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{Requeue: true}, nil
 	}
 
+	err = r.ensureKEPAScaler(aimodel, logger, aimodel.Status.State == "Running" && aimodel.Spec.MsgBacklogThreshold != nil)
+	if err != nil {
+		logger.Error(err, "Failed to ensure KEDA Scaler")
+		return ctrl.Result{}, err
+	}
+
 	return ctrl.Result{}, nil
+}
+
+func (r *AIModelReconciler) ensureKEPAScaler(aimodel *modelv1alpha1.AIModel, logger logr.Logger, shouldExist bool) error {
+	found := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "keda.sh/v1alpha1",
+			"kind":       "ScaledObject",
+		},
+	}
+
+	err := r.Get(context.Background(), types.NamespacedName{Name: aimodel.Name + "-scaledobject", Namespace: aimodel.Namespace}, found)
+
+	if err != nil && !errors.IsNotFound(err) {
+		logger.Error(err, "Failed to get ScaledObject")
+		return err
+	}
+
+	// If it should not exist, and it does, delete it
+	if !shouldExist {
+		if err == nil {
+			if err = r.Delete(context.Background(), found); err != nil {
+				logger.Error(err, "Failed to delete ScaledObject")
+				return err
+			}
+		}
+		return nil
+	}
+
+	scaledObject := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "keda.sh/v1alpha1",
+			"kind":       "ScaledObject",
+			"metadata": map[string]interface{}{
+				"name":      aimodel.Name + "-scaledobject",
+				"namespace": aimodel.Namespace,
+			},
+			"spec": map[string]interface{}{
+				"scaleTargetRef": map[string]interface{}{
+					"name": aimodel.Name + "-deployment",
+				},
+				"minReplicaCount": 1,
+				"pollingInterval": 5,
+				"triggers": []interface{}{
+					map[string]interface{}{
+						"type": "pulsar",
+						"metadata": map[string]interface{}{
+							"adminURL":            PulsarAdminUrl,
+							"topic":               "persistent://public/default/model-" + aimodel.Spec.Model,
+							"subscription":        "model-" + aimodel.Spec.Model + "-subscription",
+							"msgBacklogThreshold": strconv.Itoa(int(*aimodel.Spec.MsgBacklogThreshold)),
+						},
+					},
+				},
+			},
+		},
+	}
+	//scaledObject.SetGroupVersionKind(schema.GroupVersionKind{
+	//	Group:   "keda.sh",
+	//	Version: "v1alpha1",
+	//	Kind:    "ScaledObject",
+	//})
+	//scaledObject.SetName(aimodel.Name + "-scaledobject")
+	//scaledObject.SetNamespace(aimodel.Namespace)
+
+	if shouldExist {
+		// If it should exist, but does not exist, create.
+		if err != nil {
+			if err := controllerutil.SetControllerReference(aimodel, scaledObject, r.Scheme); err != nil {
+				logger.Error(err, "Failed to set controller reference")
+				return err
+			}
+
+			if err := r.Create(context.Background(), scaledObject); err != nil {
+				logger.Error(err, "Failed to create ScaledObject")
+				return err
+			}
+
+			logger.Info("ScaledObject created", "ScaledObject.Namespace", scaledObject.GetNamespace(), "ScaledObject.Name", scaledObject.GetName())
+		} else {
+			// If it exists, but the spec is different, update.
+			if spec, ok := found.Object["spec"].(map[string]interface{}); ok {
+				if triggers, ok1 := spec["triggers"].([]interface{}); ok1 && len(triggers) > 0 {
+					trigger := triggers[0].(map[string]interface{})
+					if metadata, ok2 := trigger["metadata"].(map[string]interface{}); ok2 {
+						if lagThreshold, ok3 := metadata["msgBacklogThreshold"].(string); ok3 {
+							adminURL, ok4 := metadata["adminURL"].(string)
+							if ok4 && lagThreshold == strconv.Itoa(int(*aimodel.Spec.MsgBacklogThreshold)) && adminURL == PulsarAdminUrl {
+								return nil
+							}
+						}
+					}
+				}
+			}
+
+			found.Object["spec"] = scaledObject.Object["spec"]
+
+			if err := r.Update(context.Background(), scaledObject); err != nil {
+				logger.Error(err, "Failed to update ScaledObject")
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (r *AIModelReconciler) deploymentForAIModel(m *modelv1alpha1.AIModel) *appsv1.Deployment {
@@ -380,10 +494,10 @@ func (r *AIModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func deploymentEqual(a, b *appsv1.Deployment, logger logr.Logger) bool {
+func deploymentEqual(a, b *appsv1.Deployment, logger logr.Logger, staticReplicas bool) bool {
 	// Compare the relevant fields to determine if they are equal
 
-	if *a.Spec.Replicas != *b.Spec.Replicas {
+	if staticReplicas && *a.Spec.Replicas != *b.Spec.Replicas {
 		logger.Info("Replicas changed", "old", *a.Spec.Replicas, "new", *b.Spec.Replicas)
 		return false
 	}

@@ -93,15 +93,43 @@ The status of `ai-model-sample` is `Failed`, and there is an error message `Conf
 
 At this point, the status of the corresponding pod depends on the program logic. If the program continues to run after reporting the error, the pod will still be in the `Running` state, but service availability is not guaranteed. If the program exits after reporting the error, the pod will enter the `CrashLoopBackOff` state.
 
+### KEDA
+
+The AI Model Operator supports KEDA. You can use KEDA to scale the number of replicas based on the number of messages in the message queue. For example, the following configuration scales the number of replicas based on the number of messages in the message queue:
+
+```yaml
+apiVersion: model.youxam.com/v1alpha1
+kind: AIModel
+metadata:
+  name: ai-model-sample
+spec:
+  type: local
+  model: TinyLlama-1.1B
+  msgBacklogThreshold: 2 # The number of messages in the message queue that triggers scaling
+  image: user/image:tag
+  maxProcessNum: 256
+```
+
+```bash
+$ kubectl apply -f demo.yaml
+$ kubectl get scaledobject
+NAME                           SCALETARGETKIND      SCALETARGETNAME              MIN   MAX   TRIGGERS   AUTHENTICATION   READY   ACTIVE    FALLBACK   PAUSED    AGE
+ai-model-sample-scaledobject   apps/v1.Deployment   ai-model-sample-deployment   1           pulsar                      True    Unknown   Unknown    Unknown   2s
+$ kubectl get hpa
+NAME                                    REFERENCE                               TARGETS             MINPODS   MAXPODS   REPLICAS   AGE
+keda-hpa-ai-model-sample-scaledobject   Deployment/ai-model-sample-deployment   3/2 (avg)   1         100       0          3s
+```
+
 ## Environment Variables
 
 The Operator supports the following environment variables:
 
-1. `PULSAR_URL`: The URL of Pulsar, default is `pulsar://pulsar:6650`;
-2. `PULSAR_TOKEN`: The Token of Pulsar, default is empty;
-3. `RES_TOPIC_NAME`: The Topic name of the result message queue, default is `res-topic`;
+1. `PULSAR_ADMIN_URL`: The URL of Pulsar Admin, default is "";
+2. `PULSAR_URL`: The URL of Pulsar, default is `pulsar://localhost:6650`;
+3. `PULSAR_TOKEN`: The Token of Pulsar, default is empty;
+4. `RES_TOPIC_NAME`: The Topic name of the result message queue, default is `res-topic`;
 
-All of the above environment variables will be passed to the Pod.
+All the above environment variables will be passed to the Pod except `PULSAR_ADMIN_URL`.
 
 In addition, the Operator will automatically inject the following environment variables:
 
@@ -138,7 +166,7 @@ If the Pod reports an event that meets the above conditions, the Operator will u
 
 When the AIModel is modified, the status will be reset to `Running`. If the program inside the Pod continues to report errors, the status will change to `Failed` again.
 
-For an example Golang code, see the [createK8sEvent function](https://github.com/uplion/ai-model-operator/blob/371c44df88e85d336638f268f370d11805458899/worker/main.go#L54-L103).
+For example, Golang code, see the [createK8sEvent function](https://github.com/uplion/ai-model-operator/blob/371c44df88e85d336638f268f370d11805458899/worker/main.go#L54-L103).
 
 ## Installation
 
@@ -181,7 +209,7 @@ You can apply the samples (examples) from the config/sample:
 kubectl apply -k config/samples/
 ```
 
->**NOTE**: Ensure that the samples has default values to test it out.
+>**NOTE**: Ensure that the samples have default values to test it out.
 
 ### To Uninstall
 **Delete the instances (CRs) from the cluster:**
