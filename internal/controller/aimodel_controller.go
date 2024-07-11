@@ -33,18 +33,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"strconv"
 	"time"
 )
 
-var MaxProcessNum = "128"
 var PulsarUrl = "pulsar://localhost:6650"
 var PulsarToken = ""
 var ResTopicName = "res-topic"
 
 func init() {
-	if v, ok := os.LookupEnv("MAX_PROCESS_NUM"); ok {
-		MaxProcessNum = v
-	}
 	if v, ok := os.LookupEnv("PULSAR_URL"); ok {
 		PulsarUrl = v
 	}
@@ -191,7 +188,7 @@ func (r *AIModelReconciler) deploymentForAIModel(m *modelv1alpha1.AIModel) *apps
 	}
 	labels["aimodel-internel-selector"] = m.Name
 
-	return &appsv1.Deployment{
+	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      m.Name + "-deployment",
 			Namespace: m.Namespace,
@@ -232,7 +229,7 @@ func (r *AIModelReconciler) deploymentForAIModel(m *modelv1alpha1.AIModel) *apps
 								},
 								{
 									Name:  "MAX_PROCESS_NUM",
-									Value: MaxProcessNum,
+									Value: "128",
 								},
 								{
 									Name:  "PULSAR_URL",
@@ -265,6 +262,12 @@ func (r *AIModelReconciler) deploymentForAIModel(m *modelv1alpha1.AIModel) *apps
 			},
 		},
 	}
+
+	if m.Spec.MaxProcessNum != nil {
+		dep.Spec.Template.Spec.Containers[0].Env[4].Value = strconv.Itoa(int(*m.Spec.MaxProcessNum))
+	}
+
+	return dep
 }
 
 func (r *AIModelReconciler) ensureEventServiceAccountRoleAndBinding(ctx context.Context, aimodel *modelv1alpha1.AIModel, dep *appsv1.Deployment, logger logr.Logger) (*corev1.ServiceAccount, error) {

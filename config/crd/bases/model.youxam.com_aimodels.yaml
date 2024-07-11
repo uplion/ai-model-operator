@@ -58,6 +58,9 @@ spec:
               image:
                 description: Image is the docker image of the model
                 type: string
+              maxProcessNum:
+                format: int32
+                type: integer
               model:
                 description: Model is the name of the model
                 type: string

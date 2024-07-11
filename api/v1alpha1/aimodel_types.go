@@ -47,6 +47,9 @@ type AIModelSpec struct {
 
 	// Image is the docker image of the model
 	Image string `json:"image"`
+
+	// +optional
+	MaxProcessNum *int32 `json:"maxProcessNum,omitempty"`
 }
 
 // AIModelStatus defines the observed state of AIModel

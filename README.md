@@ -16,6 +16,7 @@ spec:
   model: TinyLlama-1.1B
   replicas: 3
   image: user/image:tag
+  maxProcessNum: 256
 ```
 
 You can also create a remote model:
@@ -32,6 +33,7 @@ spec:
   baseURL: https://api.openai.com
   replicas: 3
   image: user/image:tag
+  maxProcessNum: 256
 ```
 
 Taking the local model as an example:
@@ -95,10 +97,9 @@ At this point, the status of the corresponding pod depends on the program logic.
 
 The Operator supports the following environment variables:
 
-1. `MAX_PROCESS_NUM`: An environment variable passed to the Pod, specifying the maximum number of threads within each Pod, default is 128;
-2. `PULSAR_URL`: The URL of Pulsar, default is `pulsar://pulsar:6650`;
-3. `PULSAR_TOKEN`: The Token of Pulsar, default is empty;
-4. `RES_TOPIC_NAME`: The Topic name of the result message queue, default is `res-topic`;
+1. `PULSAR_URL`: The URL of Pulsar, default is `pulsar://pulsar:6650`;
+2. `PULSAR_TOKEN`: The Token of Pulsar, default is empty;
+3. `RES_TOPIC_NAME`: The Topic name of the result message queue, default is `res-topic`;
 
 All of the above environment variables will be passed to the Pod.
 
@@ -108,8 +109,9 @@ In addition, the Operator will automatically inject the following environment va
 2. `MODEL_NAME`: Model name, corresponding to `model`
 3. `API_URL`: API URL for remote models, corresponding to `baseURL`
 4. `API_KEY`: API Key for remote models, corresponding to `apiKey`
-5. `AIMODEL_NAME`: The name of the AIModel resource, in the above example it's `ai-model-sample`
-6. `AIMODEL_NAMESPACE`: The namespace where the AIModel resource is located, in the above example it's `default`
+5. `MAX_PROCESS_NUM`: Maximum number of threads that can be used to process messages, corresponding to `maxProcessNum`
+6. `AIMODEL_NAME`: The name of the AIModel resource, in the above example it's `ai-model-sample`
+7. `AIMODEL_NAMESPACE`: The namespace where the AIModel resource is located, in the above example it's `default`
 
 `AIMODEL_NAME` and `AIMODEL_NAMESPACE` are provided for the program inside the Pod to report status, as described below.
 

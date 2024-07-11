@@ -9,6 +9,7 @@ spec:
   model: TinyLlama-1.1B
   replicas: 3
   image: youxam/uplion-aimodel-operator-test-worker:latest
+  maxProcessNum: 256
 ---
 # Service
 apiVersion: v1
