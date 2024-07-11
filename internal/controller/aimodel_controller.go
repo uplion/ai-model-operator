@@ -33,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"time"
 )
 
 var MaxProcessNum = "128"
@@ -86,16 +87,11 @@ func (r *AIModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	// Fetch the AIModel instance
 	aimodel := &modelv1alpha1.AIModel{}
 	err := r.Get(ctx, req.NamespacedName, aimodel)
-
 	if err != nil {
 		if errors.IsNotFound(err) {
-			// Request object not found, could have been deleted after reconcile request.
-			// Return and don't requeue
 			logger.Info("AIModel resource not found. Ignoring since object must be deleted.")
-
 			return ctrl.Result{}, nil
 		}
-		// Error reading the object - requeue the request.
 		logger.Error(err, "Failed to get AIModel.")
 		return ctrl.Result{}, err
 	}
@@ -103,35 +99,34 @@ func (r *AIModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	// Define the desired Deployment object
 	dep := r.deploymentForAIModel(aimodel)
 
-	// Check if the Deployment already exists, if not create a new one
+	// Ensure ServiceAccount, Role, and RoleBinding exist
+	sa, err := r.ensureEventServiceAccountRoleAndBinding(ctx, aimodel, dep, logger)
+	if err != nil {
+		logger.Error(err, "Failed to ensure ServiceAccount, Role and RoleBinding", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
+		return ctrl.Result{}, err
+	}
+
+	// Check if the Deployment already exists
 	found := &appsv1.Deployment{}
 	err = r.Get(ctx, types.NamespacedName{Name: dep.Name, Namespace: dep.Namespace}, found)
-
 	if err != nil {
-		// In most cases, err != nil means that Deployment does not exist.
 		if errors.IsNotFound(err) {
-			// If the Deployment does not exist, create a new Deployment
-
-			// Create ServiceAccount, Role and RoleBinding for the Deployment to create events
-			err = r.createEventServiceAccountRoleAndBinding(ctx, aimodel, dep, logger)
-			if err != nil {
-				logger.Error(err, "Failed to create ServiceAccount, Role and RoleBinding", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
-				return ctrl.Result{}, err
-			}
-
 			logger.Info("Creating a new Deployment", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
-			// Set AIModel instance as the owner and controller
 			if err := controllerutil.SetControllerReference(aimodel, dep, r.Scheme); err != nil {
 				return ctrl.Result{}, err
 			}
+
+			// Set initial timestamp for ServiceAccount
+			if dep.Spec.Template.ObjectMeta.Annotations == nil {
+				dep.Spec.Template.ObjectMeta.Annotations = make(map[string]string)
+			}
+			dep.Spec.Template.ObjectMeta.Annotations["last-serviceaccount-update"] = sa.CreationTimestamp.Format(time.RFC3339)
 
 			err = r.Create(ctx, dep)
 			if err != nil {
 				logger.Error(err, "Failed to create new Deployment", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
 				return ctrl.Result{}, err
 			}
-
-			// Update the AIModel status
 			aimodel.Status.State = "Running"
 			aimodel.Status.Message = "AIModel is running successfully"
 			err = r.Status().Update(ctx, aimodel)
@@ -139,28 +134,43 @@ func (r *AIModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				logger.Error(err, "Failed to update AIModel status")
 				return ctrl.Result{}, err
 			}
-
-			// Deployment created successfully - return and requeue
 			return ctrl.Result{Requeue: true}, nil
 		} else {
-			// Error reading the object - requeue the request.
 			logger.Error(err, "Failed to get Deployment")
 			return ctrl.Result{}, err
 		}
-
 	}
 
-	if !deploymentEqual(found, dep, logger) {
+	// Check if ServiceAccount was updated after last recorded update
+	lastUpdate, _ := time.Parse(time.RFC3339, found.Spec.Template.ObjectMeta.Annotations["last-serviceaccount-update"])
+	needsRestart := sa.CreationTimestamp.After(lastUpdate)
+
+	// Check if we need to update the Deployment
+	needsUpdate := !deploymentEqual(found, dep, logger) || needsRestart
+
+	if needsUpdate {
 		logger.Info("Updating existing Deployment", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
 		found.Spec = dep.Spec
 		found.Labels = dep.Labels
+
+		// If ServiceAccount was updated, force a restart by updating annotations
+		if needsRestart {
+			if found.Spec.Template.ObjectMeta.Annotations == nil {
+				found.Spec.Template.ObjectMeta.Annotations = make(map[string]string)
+			}
+			found.Spec.Template.ObjectMeta.Annotations["last-serviceaccount-update"] = sa.CreationTimestamp.Format(time.RFC3339)
+			found.Spec.Template.ObjectMeta.Annotations["restartedAt"] = time.Now().Format(time.RFC3339)
+			logger.Info("Forcing Deployment restart due to ServiceAccount recreation",
+				"ServiceAccount.CreationTimestamp", sa.CreationTimestamp,
+				"Last.ServiceAccount.Update", lastUpdate)
+		}
+
 		err = r.Update(ctx, found)
 		if err != nil {
 			logger.Error(err, "Failed to update Deployment", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
 			return ctrl.Result{}, err
 		}
 
-		// Update the AIModel status
 		aimodel.Status.State = "Running"
 		aimodel.Status.Message = "AIModel is running successfully"
 		err = r.Status().Update(ctx, aimodel)
@@ -168,8 +178,6 @@ func (r *AIModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			logger.Error(err, "Failed to update AIModel status")
 			return ctrl.Result{}, err
 		}
-
-		// Deployment updated successfully - return and requeue
 		return ctrl.Result{Requeue: true}, nil
 	}
 
@@ -259,14 +267,13 @@ func (r *AIModelReconciler) deploymentForAIModel(m *modelv1alpha1.AIModel) *apps
 	}
 }
 
-func (r *AIModelReconciler) createEventServiceAccountRoleAndBinding(ctx context.Context, aimodel *modelv1alpha1.AIModel, dep *appsv1.Deployment, logger logr.Logger) error {
+func (r *AIModelReconciler) ensureEventServiceAccountRoleAndBinding(ctx context.Context, aimodel *modelv1alpha1.AIModel, dep *appsv1.Deployment, logger logr.Logger) (*corev1.ServiceAccount, error) {
 	sa := &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      dep.Name + "-sa",
 			Namespace: dep.Namespace,
 		},
 	}
-
 	role := &rbacv1.Role{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      dep.Name + "-event-role",
@@ -280,7 +287,6 @@ func (r *AIModelReconciler) createEventServiceAccountRoleAndBinding(ctx context.
 			},
 		},
 	}
-
 	roleBinding := &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      dep.Name + "-event-rolebinding",
@@ -302,44 +308,61 @@ func (r *AIModelReconciler) createEventServiceAccountRoleAndBinding(ctx context.
 
 	// Set AIModel instance as the owner and controller
 	if err := controllerutil.SetControllerReference(aimodel, sa, r.Scheme); err != nil {
-		return err
+		return nil, err
 	}
 	if err := controllerutil.SetControllerReference(aimodel, role, r.Scheme); err != nil {
-		return err
+		return nil, err
 	}
 	if err := controllerutil.SetControllerReference(aimodel, roleBinding, r.Scheme); err != nil {
-		return err
+		return nil, err
 	}
 
-	// Create ServiceAccount
+	// Ensure ServiceAccount
 	err := r.Create(ctx, sa)
-	if !errors.IsAlreadyExists(err) {
-		if err != nil {
-			return err
+	if err != nil {
+		if errors.IsAlreadyExists(err) {
+			// If it exists, update it
+			if err := r.Update(ctx, sa); err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
 		}
+	} else {
 		logger.Info("ServiceAccount created", "ServiceAccount.Namespace", sa.Namespace, "ServiceAccount.Name", sa.Name)
 	}
 
-	// Create Role
+	// Ensure Role
 	err = r.Create(ctx, role)
-	if !errors.IsAlreadyExists(err) {
-		if err != nil {
-			return err
+	if err != nil {
+		if errors.IsAlreadyExists(err) {
+			// If it exists, update it
+			if err := r.Update(ctx, role); err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
 		}
+	} else {
 		logger.Info("Role created", "Role.Namespace", role.Namespace, "Role.Name", role.Name)
 	}
 
-	// Create RoleBinding
+	// Ensure RoleBinding
 	err = r.Create(ctx, roleBinding)
-	if !errors.IsAlreadyExists(err) {
-		if err != nil {
-			return err
+	if err != nil {
+		if errors.IsAlreadyExists(err) {
+			// If it exists, update it
+			if err := r.Update(ctx, roleBinding); err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
 		}
+	} else {
 		logger.Info("RoleBinding created", "RoleBinding.Namespace", roleBinding.Namespace, "RoleBinding.Name", roleBinding.Name)
-
 	}
 
-	return nil
+	return sa, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -347,12 +370,10 @@ func (r *AIModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&modelv1alpha1.AIModel{}).
-		// The following code is used to listen to the Deployment, ServiceAccount, Role and RoleBinding,
-		// which is not necessary for the current scenario
-		//Owns(&appsv1.Deployment{}).
-		//Owns(&corev1.ServiceAccount{}).
-		//Owns(&rbacv1.Role{}).
-		//Owns(&rbacv1.RoleBinding{}).
+		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.ServiceAccount{}).
+		Owns(&rbacv1.Role{}).
+		Owns(&rbacv1.RoleBinding{}).
 		Complete(r)
 }
 
