@@ -99,6 +99,11 @@ func (r *AIModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, err
 	}
 
+	if aimodel.Spec.Replicas == nil {
+		aimodel.Spec.Replicas = new(int32)
+		*aimodel.Spec.Replicas = 1
+	}
+
 	// Define the desired Deployment object
 	dep := r.deploymentForAIModel(aimodel)
 
@@ -144,7 +149,7 @@ func (r *AIModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 	}
 
-	// Check if ServiceAccount was updated after last recorded update
+	// Check if ServiceAccount was updated after the last recorded update
 	lastUpdate, _ := time.Parse(time.RFC3339, found.Spec.Template.ObjectMeta.Annotations["last-serviceaccount-update"])
 	needsRestart := sa.CreationTimestamp.After(lastUpdate)
 
