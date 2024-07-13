@@ -7,7 +7,8 @@ metadata:
 spec:
   type: local
   model: TinyLlama-1.1B
-  replicas: 4
+  msgBacklogThreshold: 2
+  replicas: 3
   image: youxam/uplion-aimodel-operator-test-worker:latest
 ---
 # Service

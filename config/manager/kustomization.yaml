@@ -6,3 +6,8 @@ images:
 - name: controller
   newName: youxam/uplion-aimodel-operator
   newTag: latest
+secretGenerator:
+- literals:
+  - PULSAR_ADMIN_URL="http://pulsar-local-broker.pulsar.svc.cluster.local:8080"
+  - PULSAR_URL="pulsar://pulsar-local-broker.pulsar.svc.cluster.local:6650"
+  name: manager-secret

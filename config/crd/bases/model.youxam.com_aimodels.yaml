@@ -75,7 +75,7 @@ spec:
                 format: int32
                 type: integer
               type:
-                description: Type of the AIModel, could be "local" or "remote"
+                description: The Type of the AIModel could be "local" or "remote"
                 type: string
             required:
             - image

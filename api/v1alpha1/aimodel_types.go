@@ -28,7 +28,7 @@ type AIModelSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	// Type of the AIModel, could be "local" or "remote"
+	// The Type of the AIModel could be "local" or "remote"
 	Type string `json:"type"`
 
 	// Model is the name of the model
