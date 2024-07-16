@@ -1,0 +1,10 @@
+apiVersion: model.youxam.com/v1alpha1
+kind: AIModel
+metadata:
+  name: ai-model-sample
+spec:
+  type: local
+  model: TinyLlama-1.1B
+  replicas: 3
+  image: youxam/uplion-aimodel-operator-test-worker:latest
+
